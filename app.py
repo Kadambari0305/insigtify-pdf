@@ -331,7 +331,7 @@ with tab_upload:
 
                         # Unified FAISS Vector Store
                         embeddings = GoogleGenerativeAIEmbeddings(
-                            model="models/embedding-001",
+                            model="models/text-embedding-004",
                             google_api_key=st.session_state.api_key
                         )
                         vector_store = FAISS.from_documents(all_langchain_docs, embedding=embeddings)
@@ -392,7 +392,7 @@ with tab_chat:
                         # Load vector store if needed
                         if st.session_state.vector_store is None:
                             embeddings = GoogleGenerativeAIEmbeddings(
-                                model="models/embedding-001",
+                                model="models/text-embedding-004",
                                 google_api_key=st.session_state.api_key
                             )
                             if os.path.exists("faiss-index"):
