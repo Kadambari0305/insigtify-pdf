@@ -139,7 +139,7 @@ def extract_text_from_pdf(uploaded_file, api_key: str) -> str:
     if len(extracted_text.strip()) < 50:
         logger.info(f"PDF {uploaded_file.name} appears scanned. Using Gemini Vision OCR...")
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-3.6-flash')
         pdf_bytes = uploaded_file.getvalue()
         pdf_parts = [{"mime_type": "application/pdf", "data": pdf_bytes}]
         ocr_prompt = "Perform full OCR extraction on this scanned PDF document. Extract all printed text, handwritten notes, tables, and values in full detail."
@@ -152,7 +152,7 @@ def extract_text_from_image(uploaded_file, api_key: str) -> tuple[str, Image.Ima
     """Perform Gemini Vision OCR on photos/images."""
     image = Image.open(uploaded_file)
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-3.6-flash')
     
     ocr_prompt = (
         "Analyze this photo/image in full detail. Extract all readable text, printed words, "
@@ -331,7 +331,7 @@ with tab_upload:
 
                         # Unified FAISS Vector Store
                         embeddings = GoogleGenerativeAIEmbeddings(
-                            model="models/embedding-001",
+                            model="models/gemini-embedding-001",
                             google_api_key=st.session_state.api_key
                         )
                         vector_store = FAISS.from_documents(all_langchain_docs, embedding=embeddings)
@@ -392,7 +392,7 @@ with tab_chat:
                         # Load vector store if needed
                         if st.session_state.vector_store is None:
                             embeddings = GoogleGenerativeAIEmbeddings(
-                                model="models/embedding-001",
+                                model="models/gemini-embedding-001",
                                 google_api_key=st.session_state.api_key
                             )
                             if os.path.exists("faiss-index"):
@@ -419,7 +419,7 @@ with tab_chat:
 
                         # Generate Answer
                         genai.configure(api_key=st.session_state.api_key)
-                        model = genai.GenerativeModel('gemini-1.5-flash')
+                        model = genai.GenerativeModel('gemini-3.6-flash')
 
                         prompt = f"""
                         {system_prompt}
