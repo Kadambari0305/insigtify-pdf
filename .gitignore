@@ -1,0 +1,17 @@
+# Environment variables (credentials & secret keys)
+.env
+
+# Python build & bytecode artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# Vector Store local cache
+faiss-index/
+
+# Temporary files
+temp_scanned.pdf
+data/
