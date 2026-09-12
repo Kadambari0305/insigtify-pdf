@@ -1,391 +1,461 @@
 import streamlit as st
 import google.generativeai as genai
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
 from pypdf import PdfReader
+from PIL import Image
 from typing import List, Optional
 import logging
 import os
+import io
+import uuid
+from datetime import datetime
+from dotenv import load_dotenv
+
+# Import Database Manager
+from db_manager import db_manager
+
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Define constants
-CHUNK_SIZE = 1000  # Example chunk size
-CHUNK_OVERLAP = 200  # Example overlap
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB max file size
+# Constants
+CHUNK_SIZE = 1000
+CHUNK_OVERLAP = 200
 
 # Set page config
 st.set_page_config(
-    page_title="Data Analysis Hub",
+    page_title="Multi-Document & Photo Analysis Hub",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# --- Onboarding / Welcome Card ---
-
-st.markdown("""
-    <div style="background-color: #e0f7fa; padding: 1.5rem; border-radius: 10px; margin-bottom: 2rem;">
-        <h2 style="color: #00796b;">👋 Welcome to Data Analysis Hub!</h2>
-        <p style="color: #004d40; font-size: 1.1rem;">
-            Easily upload your business documents, scanned notes, or PDFs.<br>
-            Our AI will intelligently analyze and answer your questions! 🚀
-        </p>
-        <ul style="color: #00695c; font-size: 1rem;">
-            <li>Step 1️⃣: Enter your Google Gemini API Key in sidebar.</li>
-            <li>Step 2️⃣: Upload one or more PDF files.</li>
-            <li>Step 3️⃣: Click "Analyze" and ask questions!</li>
-        </ul>
-    </div>
-""", unsafe_allow_html=True)
-
-# Custom styles
+# Custom Styling
 st.markdown("""
     <style>
-    /* Main title */
     .main-title {
         text-align: center;
-        padding: 1.5rem 0;
+        padding: 0.8rem 0;
         color: #1E3D59;
-        font-size: 2.5rem;
-        font-weight: 700;
-        background: linear-gradient(120deg, #1E3D59, #17B794);
+        font-size: 2.3rem;
+        font-weight: 800;
+        background: linear-gradient(120deg, #1E3D59, #17B794, #FF6F61);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
     }
-
-    /* Cards */
-    .card {
+    .badge {
+        display: inline-block;
+        padding: 0.25rem 0.6rem;
+        font-size: 0.85rem;
+        font-weight: 600;
+        border-radius: 6px;
+        margin-right: 0.4rem;
+        margin-bottom: 0.4rem;
+        color: white;
+    }
+    .badge-pdf { background-color: #e53935; }
+    .badge-image { background-color: #1e88e5; }
+    .auth-box {
+        max-width: 480px;
+        margin: 2rem auto;
         padding: 2rem;
-        border-radius: 15px;
+        border-radius: 12px;
         background: #ffffff;
-        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
-        margin: 1.5rem 0;
-        transition: transform 0.3s ease, box-shadow 0.3s ease;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+        border: 1px solid #e0e0e0;
     }
-    .card:hover {
-        transform: translateY(-10px);
-        box-shadow: 0 12px 24px rgba(0, 0, 0, 0.2);
-    }
-    .card-title {
-        color: #1E3D59;
-        font-size: 1.75rem;
-        margin-bottom: 1.25rem;
-        font-weight: 600;
-    }
-    .card-text {
-        color: #666;
-        font-size: 1.1rem;
-        margin-bottom: 1.75rem;
-    }
-
-    /* Buttons */
-    .stButton button {
-        background: linear-gradient(135deg, #17B794, #1E3D59);
-        color: white;
-        border: none;
-        padding: 0.75rem 1.5rem;
-        border-radius: 8px;
-        font-size: 1rem;
-        font-weight: 600;
-        cursor: pointer;
-        transition: background 0.3s ease;
-    }
-    .stButton button:hover {
-        background: linear-gradient(135deg, #1E3D59, #17B794);
-    }
-
-    /* Sidebar */
-    .sidebar .sidebar-content {
-        background: linear-gradient(145deg, #1E3D59, #17B794);
-        color: white;
+    .card {
         padding: 1.5rem;
-        border-radius: 15px;
-    }
-    .sidebar .sidebar-content h1 {
-        color: white;
-        font-size: 1.75rem;
-        margin-bottom: 1.5rem;
-    }
-    .sidebar .sidebar-content h2 {
-        color: white;
-        font-size: 1.5rem;
+        border-radius: 12px;
+        background: #ffffff;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
         margin-bottom: 1rem;
+        border: 1px solid #e0e0e0;
     }
-    .sidebar .sidebar-content p {
-        color: #f0f0f0;
-        font-size: 1rem;
-        margin-bottom: 1rem;
-    }
-
-    /* File uploader */
-    .stFileUploader {
-        margin-bottom: 1.5rem;
-    }
-
-    /* Text input */
-    .stTextInput input {
-        border: 2px solid #1E3D59;
+    .history-card {
+        padding: 0.8rem;
         border-radius: 8px;
-        padding: 0.75rem;
-        font-size: 1rem;
+        background: #f1f5f9;
+        margin-bottom: 0.5rem;
+        border-left: 4px solid #17B794;
     }
-
-    /* Spinner */
-    .stSpinner {
-        color: #17B794;
-    }
-
-    /* Footer */
     .footer {
         text-align: center;
-        padding: 1.5rem;
+        padding: 1.2rem;
         color: #666;
         font-size: 0.9rem;
-        background: #f0f0f0;
-        border-radius: 15px;
+        background: #f8f9fa;
+        border-radius: 12px;
         margin-top: 2rem;
     }
     </style>
-    """, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
-# Initialize session state
+# Initialize Session States
+if 'current_user' not in st.session_state:
+    st.session_state.current_user = None
 if 'api_key' not in st.session_state:
-    st.session_state.api_key = None
+    st.session_state.api_key = os.getenv("GOOGLE_API_KEY", "")
+if 'active_session_id' not in st.session_state:
+    st.session_state.active_session_id = str(uuid.uuid4())
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = []
 if 'docs_processed' not in st.session_state:
     st.session_state.docs_processed = False
 if 'vector_store' not in st.session_state:
     st.session_state.vector_store = None
-if 'current_pdf' not in st.session_state:
-    st.session_state.current_pdf = None
-if 'current_mode' not in st.session_state:
-    st.session_state.current_mode = None  # Tracks whether normal or OCR PDF is being processed
+if 'processed_files_summary' not in st.session_state:
+    st.session_state.processed_files_summary = []
+if 'image_previews' not in st.session_state:
+    st.session_state.image_previews = {}
 
-# Sidebar for API key and instructions
-with st.sidebar:
-    st.header("API Configuration")
-    st.session_state.api_key = st.text_input("Google Gemini API Key", type="password")
-    st.markdown("---")
-    st.markdown("### 📋 Instructions")
-    st.markdown("""
-    1. Upload one or more PDF files
-    2. Click 'Process Documents'
-    3. Ask questions about your documents
-    """)
+# Prompt Template
+system_prompt = """
+You are an expert multi-modal document analyst and research assistant.
+You are analyzing information extracted from multiple sources including printed PDFs, scanned handwritten documents, receipts, invoices, and photo images.
 
-# Main title
-st.markdown("<h1 class='main-title'>Data Analysis Hub</h1>", unsafe_allow_html=True)
-
-# Create two columns for the cards
-col1, col2 = st.columns(2)
-
-# Expert system prompt
-input_prompt = """
-You are an expert in document analysis and information extraction, specializing in:
-- Printed business documents (invoices, receipts, purchase orders)
-- Handwritten notes and records
-- Scanned historical documents
-- Mixed format documents containing both printed and handwritten elements
-
-Your capabilities include:
-- Reading and interpreting handwritten text, including different handwriting styles and varying legibility
-- Processing traditional printed/typed documents
-- Understanding document structure regardless of formatting or layout
-- Handling various document qualities (faded text, smudges, creases, watermarks)
-- Working with different languages and numerical formats
-- Recognizing common business terms, financial data, and document-specific terminology
-
-For any document you analyze:
-1. Consider both printed and handwritten elements equally
-2. Account for potential quality issues in scanned documents
-3. Look for contextual clues to validate information
-4. Flag any uncertainties or illegible portions
-5. Maintain accuracy while dealing with different writing styles and formats
-
-Please answer questions based on the information visible in the provided document.
+Guidelines for your response:
+1. Answer the user's question clearly, thoroughly, and accurately based on the provided document context.
+2. ALWAYS cite the source file name(s) (e.g. `[Source: document.pdf]`) when presenting facts, data, or answers.
+3. If information comes from multiple files, highlight the connections or compare data across files.
+4. If a question cannot be answered from the provided context, state that clearly without making up facts.
 """
 
-def get_gemini_response(input_prompt, pdf_data, user_question):
-    """Get response from Gemini model"""
-    model = genai.GenerativeModel('gemini-2.0-flash')
+def extract_text_from_pdf(uploaded_file, api_key: str) -> str:
+    """Extract text from standard PDF, fallback to Gemini OCR for scanned pages."""
+    pdf_reader = PdfReader(uploaded_file)
+    extracted_text = ""
+    
+    for page_num, page in enumerate(pdf_reader.pages, 1):
+        text = page.extract_text()
+        if text:
+            extracted_text += f"\n--- Page {page_num} ---\n" + text
 
-    # Combine the prompts
-    combined_prompt = f"""
-    {input_prompt}
+    if len(extracted_text.strip()) < 50:
+        logger.info(f"PDF {uploaded_file.name} appears scanned. Using Gemini Vision OCR...")
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-3.6-flash')
+        pdf_bytes = uploaded_file.getvalue()
+        pdf_parts = [{"mime_type": "application/pdf", "data": pdf_bytes}]
+        ocr_prompt = "Perform full OCR extraction on this scanned PDF document. Extract all printed text, handwritten notes, tables, and values in full detail."
+        response = model.generate_content([ocr_prompt, pdf_parts[0]])
+        extracted_text = response.text
 
-    User Question: {user_question}
-    """
+    return extracted_text
 
-    response = model.generate_content([combined_prompt, pdf_data[0]])
-    return response.text
+def extract_text_from_image(uploaded_file, api_key: str) -> tuple[str, Image.Image]:
+    """Perform Gemini Vision OCR on photos/images."""
+    image = Image.open(uploaded_file)
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel('gemini-3.6-flash')
+    
+    ocr_prompt = (
+        "Analyze this photo/image in full detail. Extract all readable text, printed words, "
+        "handwritten notes, figures, table contents, key-value pairs, and describe key visual data."
+    )
+    response = model.generate_content([ocr_prompt, image])
+    return response.text, image
 
-def process_pdf(uploaded_file):
-    """Process the uploaded PDF file for the model"""
-    if uploaded_file is not None:
-        # Read the file into bytes
-        bytes_data = uploaded_file.getvalue()
+# --- AUTHENTICATION SCREEN ---
+if not st.session_state.current_user:
+    st.markdown("<h1 class='main-title'>⚡ Data Analysis Hub</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align:center; color:#555;'>Please Login or Create an Account to access your Multi-Modal Document Hub</p>", unsafe_allow_html=True)
 
-        pdf_parts = [
-            {
-                "mime_type": uploaded_file.type,
-                "data": bytes_data
-            }
-        ]
-        return pdf_parts
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        tab_login, tab_signup = st.tabs(["🔐 Login", "📝 Sign Up"])
+
+        with tab_login:
+            st.markdown("### Welcome Back!")
+            login_username = st.text_input("Username", key="login_user")
+            login_password = st.text_input("Password", type="password", key="login_pwd")
+
+            if st.button("Log In", type="primary", use_container_width=True):
+                if login_username and login_password:
+                    ok, msg = db_manager.authenticate_user(login_username, login_password)
+                    if ok:
+                        st.session_state.current_user = login_username.lower().strip()
+                        st.session_state.active_session_id = str(uuid.uuid4())
+                        st.session_state.chat_history = []
+                        st.success(f"Welcome back, {login_username}!")
+                        st.rerun()
+                    else:
+                        st.error(msg)
+                else:
+                    st.warning("Please enter username and password.")
+
+        with tab_signup:
+            st.markdown("### Create New Client Account")
+            signup_username = st.text_input("Username", key="signup_user")
+            signup_email = st.text_input("Email", key="signup_email")
+            signup_password = st.text_input("Password", type="password", key="signup_pwd")
+
+            if st.button("Create Account", type="primary", use_container_width=True):
+                if signup_username and signup_password:
+                    ok, msg = db_manager.register_user(signup_username, signup_email, signup_password)
+                    if ok:
+                        st.success("Account created successfully! You can now log in.")
+                    else:
+                        st.error(msg)
+                else:
+                    st.warning("Please fill in all required fields.")
+
+    st.stop()
+
+# --- AUTHENTICATED APP SCREEN ---
+with st.sidebar:
+    st.markdown(f"👤 **Client:** `{st.session_state.current_user}`")
+    if st.button("🚪 Logout", use_container_width=True):
+        st.session_state.current_user = None
+        st.session_state.docs_processed = False
+        st.session_state.vector_store = None
+        st.session_state.chat_history = []
+        st.rerun()
+
+    st.markdown("---")
+    st.header("🔑 API & Configuration")
+    default_key = os.getenv("GOOGLE_API_KEY", "")
+    st.session_state.api_key = st.text_input("Google Gemini API Key", value=st.session_state.api_key or default_key, type="password")
+
+    st.markdown("---")
+    st.header("📜 Chat Session History")
+    
+    # Reload Past Conversations
+    user_sessions = db_manager.get_user_sessions(st.session_state.current_user)
+    if user_sessions:
+        for sess in user_sessions:
+            sess_id = sess["session_id"]
+            title = sess.get("title", "Chat Session")
+            msg_count = len(sess.get("messages", []))
+            
+            is_active = (sess_id == st.session_state.active_session_id)
+            btn_label = f"{"👉 " if is_active else "💬 "}{title[:24]} ({msg_count} msgs)"
+            
+            if st.button(btn_label, key=f"sess_{sess_id}", use_container_width=True):
+                st.session_state.active_session_id = sess_id
+                st.session_state.chat_history = sess.get("messages", [])
+                st.session_state.processed_files_summary = [
+                    {"name": fname, "type": "doc", "chunks": "-"} for fname in sess.get("files", [])
+                ]
+                st.rerun()
     else:
-        raise FileNotFoundError("No file uploaded")
+        st.caption("No past saved sessions found.")
 
-with col1:
-    # Normal PDF Analysis UI
+    if st.button("➕ Start New Session", type="secondary", use_container_width=True):
+        st.session_state.active_session_id = str(uuid.uuid4())
+        st.session_state.chat_history = []
+        st.session_state.docs_processed = False
+        st.session_state.vector_store = None
+        st.session_state.processed_files_summary = []
+        st.rerun()
+
+# Title Header
+st.markdown("<h1 class='main-title'>⚡ Data Analysis Hub: PDFs, OCR & Photos</h1>", unsafe_allow_html=True)
+
+# Layout Tabs
+tab_upload, tab_inspect, tab_chat = st.tabs(["📁 File Uploader", "🖼️ Photo & PDF Inspector", "💬 AI Assistant & History"])
+
+with tab_upload:
     st.markdown("""
-        <div class='card' style="color: black;">
-            <h3 class='card-title'>📄 Normal PDF Analysis</h3>
-            <p class='card-text'>Upload PDF files for standard text extraction and analysis.
-            </p>
+        <div class='card'>
+            <h3>📤 Upload Documents & Photos</h3>
+            <p>Upload multiple PDFs, scanned documents, receipts, handwritten notes, or images to analyze together.</p>
         </div>
     """, unsafe_allow_html=True)
-    normal_pdf_file = st.file_uploader("Choose a PDF file", type=['pdf'], key='normal_pdf')
-    if st.button("Analyze Normal PDF"):
-        if normal_pdf_file is not None:
-            if st.session_state.api_key:
-                # Check if a new PDF is uploaded or mode is switched
-                if (st.session_state.current_pdf != normal_pdf_file.name or
-                    st.session_state.current_mode != "normal"):
-                    st.session_state.current_pdf = normal_pdf_file.name
-                    st.session_state.current_mode = "normal"
-                    st.session_state.docs_processed = False
-                    st.session_state.vector_store = None
 
-                with st.spinner("Processing documents..."):
+    uploaded_files = st.file_uploader(
+        "Choose PDF files or Images",
+        type=['pdf', 'png', 'jpg', 'jpeg', 'webp'],
+        accept_multiple_files=True,
+        key='multi_uploader'
+    )
+
+    if uploaded_files:
+        st.write(f"**Selected Files ({len(uploaded_files)}):**")
+        cols = st.columns(min(len(uploaded_files), 4))
+        for idx, file in enumerate(uploaded_files):
+            col = cols[idx % 4]
+            is_pdf = file.name.lower().endswith('.pdf')
+            badge_class = "badge-pdf" if is_pdf else "badge-image"
+            file_type = "PDF" if is_pdf else "IMAGE"
+            col.markdown(f"<span class='badge {badge_class}'>{file_type}</span> <b>{file.name}</b>", unsafe_allow_html=True)
+
+        if st.button("🚀 Process All Files", type="primary"):
+            if not st.session_state.api_key:
+                st.warning("⚠️ Please enter your Google Gemini API Key in the sidebar.")
+            else:
+                with st.spinner("Processing files with AI OCR & Vector Indexing..."):
                     try:
-                        # Extract text from PDF
-                        pdf_reader = PdfReader(normal_pdf_file)
-                        raw_text = ""
-                        for page in pdf_reader.pages:
-                            raw_text += page.extract_text()
+                        all_langchain_docs = []
+                        processed_summary = []
+                        image_previews = {}
 
-                        # Create text chunks
                         splitter = RecursiveCharacterTextSplitter(
                             chunk_size=CHUNK_SIZE,
                             chunk_overlap=CHUNK_OVERLAP,
                             length_function=len
                         )
-                        text_chunks = splitter.split_text(raw_text)
 
-                        # Create and save vector store
-                        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=st.session_state.api_key)
-                        vector_store = FAISS.from_texts(text_chunks, embedding=embeddings)
+                        for file in uploaded_files:
+                            file_name = file.name
+                            ext = file_name.split('.')[-1].lower()
+
+                            st.write(f"⚙️ Processing `{file_name}`...")
+
+                            if ext == 'pdf':
+                                raw_text = extract_text_from_pdf(file, st.session_state.api_key)
+                                file_kind = 'pdf'
+                            else:
+                                raw_text, img = extract_text_from_image(file, st.session_state.api_key)
+                                image_previews[file_name] = img
+                                file_kind = 'image'
+
+                            text_chunks = splitter.split_text(raw_text)
+
+                            for chunk_idx, chunk in enumerate(text_chunks):
+                                all_langchain_docs.append(Document(
+                                    page_content=chunk,
+                                    metadata={"source": file_name, "type": file_kind, "chunk": chunk_idx + 1}
+                                ))
+
+                            processed_summary.append({
+                                "name": file_name,
+                                "type": file_kind,
+                                "chunks": len(text_chunks)
+                            })
+
+                        # Unified FAISS Vector Store
+                        embeddings = GoogleGenerativeAIEmbeddings(
+                            model="models/gemini-embedding-001",
+                            google_api_key=st.session_state.api_key
+                        )
+                        vector_store = FAISS.from_documents(all_langchain_docs, embedding=embeddings)
                         vector_store.save_local("faiss-index")
 
                         st.session_state.vector_store = vector_store
                         st.session_state.docs_processed = True
-                        st.success("✅ Documents processed successfully!")
+                        st.session_state.processed_files_summary = processed_summary
+                        st.session_state.image_previews = image_previews
+
+                        st.success(f"✅ Successfully processed {len(uploaded_files)} file(s) into {len(all_langchain_docs)} vector chunks!")
                     except Exception as e:
-                        st.error(f"Error processing documents: {str(e)}")
+                        logger.error(f"Processing error: {e}", exc_info=True)
+                        st.error(f"Error processing files: {str(e)}")
+
+with tab_inspect:
+    st.header("🖼️ Uploaded Photo & Image Inspector")
+    if st.session_state.image_previews:
+        cols = st.columns(3)
+        for idx, (img_name, img_obj) in enumerate(st.session_state.image_previews.items()):
+            col = cols[idx % 3]
+            col.image(img_obj, caption=img_name, use_container_width=True)
+    else:
+        st.info("No photo previews available. Upload images in the File Uploader tab to inspect them here.")
+
+with tab_chat:
+    st.header("💬 AI Assistant & Session Chat")
+
+    # Render Existing History
+    if st.session_state.chat_history:
+        st.markdown("### 📜 Session Conversation Thread")
+        for msg in st.session_state.chat_history:
+            role = msg.get("role")
+            content = msg.get("content")
+            if role == "user":
+                st.chat_message("user").write(content)
             else:
-                st.warning("Please enter your Google Gemini API Key.")
-        else:
-            st.warning("Please upload a PDF file first.")
+                st.chat_message("assistant").write(content)
+        st.markdown("---")
 
-with col2:
-    # OCR PDF Analysis UI
-    st.markdown("""
-        <div class='card' style="color: black;">
-            <h3 class='card-title'>🖹 OCR PDF Analysis</h3>
-            <p class='card-text'>Upload scanned PDFs or images within PDFs for Optical Character Recognition (OCR) based text extraction.</p>
-        </div>
-    """, unsafe_allow_html=True)
-    ocr_pdf_file = st.file_uploader("Choose a PDF file for OCR", type=['pdf'], key='ocr_pdf')
-    if st.button("Analyze OCR PDF"):
-        if ocr_pdf_file is not None:
-            if st.session_state.api_key:
-                # Check if a new PDF is uploaded or mode is switched
-                if (st.session_state.current_pdf != ocr_pdf_file.name or
-                    st.session_state.current_mode != "ocr"):
-                    st.session_state.current_pdf = ocr_pdf_file.name
-                    st.session_state.current_mode = "ocr"
-                    st.session_state.docs_processed = False
-                    st.session_state.vector_store = None
+    if st.session_state.docs_processed:
+        st.info("💡 You can ask questions about any individual file or cross-compare information across all uploaded files and photos.")
+        user_question = st.text_area("🤔 Ask a question across your documents & photos:", height=100)
 
-                with st.spinner("Processing documents..."):
+        if st.button("Send Question", type="primary"):
+            if user_question.strip():
+                with st.spinner("Analyzing context with Gemini..."):
                     try:
-                        # Process the PDF and send it directly to the LLM
-                        pdf_data = process_pdf(ocr_pdf_file)
-                        st.session_state.ocr_response = pdf_data
-                        st.session_state.docs_processed = True
-                        st.success("✅ Documents processed successfully!")
-                    except Exception as e:
-                        st.error(f"Error processing documents: {str(e)}")
-            else:
-                st.warning("Please enter your Google Gemini API Key.")
-        else:
-            st.warning("Please upload a PDF file first.")
-
-# Chat interface
-if st.session_state.docs_processed:
-    user_question = st.text_area("🤔 Ask a question about your documents:", height=100)
-    if st.button("Send", type="primary"):
-        if user_question:
-            with st.spinner("Thinking..."):
-                try:
-                    if st.session_state.current_mode == "normal":
-                        # Load vector store if it exists
+                        # Load vector store if needed
                         if st.session_state.vector_store is None:
-                            embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=st.session_state.api_key)
+                            embeddings = GoogleGenerativeAIEmbeddings(
+                                model="models/gemini-embedding-001",
+                                google_api_key=st.session_state.api_key
+                            )
                             if os.path.exists("faiss-index"):
-                                st.session_state.vector_store = FAISS.load_local("faiss-index", embeddings, allow_dangerous_deserialization=True)
+                                st.session_state.vector_store = FAISS.load_local(
+                                    "faiss-index",
+                                    embeddings,
+                                    allow_dangerous_deserialization=True
+                                )
                             else:
-                                st.error("Vector store not found. Please process the documents first.")
+                                st.error("Vector store index not found. Please process documents first.")
                                 st.stop()
 
-                        # Perform similarity search to find relevant text chunks
-                        relevant_chunks = st.session_state.vector_store.similarity_search(user_question, k=3)  # Get top 3 relevant chunks
-                        context = "\n".join([chunk.page_content for chunk in relevant_chunks])
+                        # Similarity Search
+                        relevant_docs = st.session_state.vector_store.similarity_search(user_question, k=6)
 
-                        # Configure Gemini and generate a natural language response
+                        context_parts = []
+                        cited_sources = set()
+                        for doc in relevant_docs:
+                            src = doc.metadata.get("source", "Unknown")
+                            cited_sources.add(src)
+                            context_parts.append(f"--- [Source: {src}] ---\n{doc.page_content}")
+
+                        combined_context = "\n\n".join(context_parts)
+
+                        # Generate Answer
                         genai.configure(api_key=st.session_state.api_key)
-                        model = genai.GenerativeModel('gemini-2.0-flash')
+                        model = genai.GenerativeModel('gemini-3.6-flash')
+
                         prompt = f"""
-                        {input_prompt}
+                        {system_prompt}
+
+                        Extracted Context from Uploaded Files & Photos:
+                        {combined_context}
 
                         User Question: {user_question}
                         """
-                        response = model.generate_content([prompt, {"text": context}])
-                        st.write("🤖 Assistant:", response.text)
 
-                    elif st.session_state.current_mode == "ocr":
-                        # Use the OCR response stored in session state
-                        if 'ocr_response' in st.session_state:
-                            response = get_gemini_response(input_prompt, st.session_state.ocr_response, user_question)
-                            st.write("🤖 Assistant:", response)
-                        else:
-                            st.error("No OCR response found. Please process the OCR PDF first.")
-                except Exception as e:
-                    st.error(f"Error generating response: {str(e)}")
-        else:
-            st.warning("Please enter a question.")
+                        response = model.generate_content(prompt)
+                        answer_text = response.text
 
-# Footer with custom background color and styling
+                        # Display Assistant Answer
+                        st.chat_message("user").write(user_question)
+                        st.chat_message("assistant").write(answer_text)
+
+                        # Save Turn to Database Manager
+                        file_names = [f["name"] for f in st.session_state.processed_files_summary]
+                        session_title = user_question[:30] + "..." if len(user_question) > 30 else user_question
+                        
+                        db_manager.save_chat_turn(
+                            username=st.session_state.current_user,
+                            session_id=st.session_state.active_session_id,
+                            session_title=session_title,
+                            files=file_names,
+                            user_msg=user_question,
+                            assistant_msg=answer_text
+                        )
+
+                        # Update Local State
+                        st.session_state.chat_history.append({"role": "user", "content": user_question, "timestamp": datetime.now().isoformat()})
+                        st.session_state.chat_history.append({"role": "assistant", "content": answer_text, "timestamp": datetime.now().isoformat()})
+                        st.rerun()
+
+                    except Exception as e:
+                        st.error(f"Error generating answer: {str(e)}")
+            else:
+                st.warning("Please type a question before sending.")
+    else:
+        st.warning("👈 Please upload and click 'Process All Files' in the File Uploader tab first.")
+
+# Footer
 st.markdown("""
-    <style>
-    .footer {
-        background-color: #f8f9fa;
-        padding: 1.5rem;
-        border-radius: 15px;
-        margin-top: 2rem;
-        text-align: center;
-    }
-    .footer p {
-        font-family: 'Georgia', serif;
-        font-size: 1rem;
-        color: #666;
-        margin: 0;
-    }
-    </style>
     <div class="footer">
-        <p>Built with ❤ by TeamCodeFusion</p>
+        <p>Built with ❤ for Multi-Modal Document & Photo Analysis | Powered by Gemini 3.6 & MongoDB</p>
     </div>
 """, unsafe_allow_html=True)
